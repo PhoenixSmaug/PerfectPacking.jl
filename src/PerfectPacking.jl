@@ -347,7 +347,7 @@ solver HiGHS.
 function solveIntegerProgramming(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
     s = length(rects)
     model = Model(HiGHS.Optimizer)
-    set_optimizer_attribute(model, "log_to_console", output)
+    set_optimizer_attribute(model, "log_to_console", false)
 
     @variable(model, px[1:s], Int)  # x position
     @variable(model, py[1:s], Int)  # y position
@@ -408,7 +408,7 @@ solver HiGHS.
 function solveIntegerProgrammingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
     s = length(rects)
     model = Model(HiGHS.Optimizer)
-    set_optimizer_attribute(model, "log_to_console", output)
+    set_optimizer_attribute(model, "log_to_console", false)
 
     @variable(model, sx[1:s], Int)  # width of rectangle i
     @variable(model, sy[1:s], Int)  # height of rectangle i
