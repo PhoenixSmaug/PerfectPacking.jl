@@ -1,16 +1,15 @@
 module PerfectPacking
-export Alg, rectanglePacking, backtracking, dancingLinks, integerProgramming
+export Alg, rectanglePacking, backtracking, integerProgramming, dancingLinks
 
 using ProgressMeter
 using JuMP
 using HiGHS
 using DataStructures
-using Suppressor#
 
 @enum Alg begin
     backtracking = 1
-    dancingLinks = 2
-    integerProgramming = 3
+    integerProgramming = 2
+    dancingLinks = 3
 end
 
 """
@@ -57,6 +56,8 @@ function rectanglePacking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}},
 
     if alg == backtracking
         result, output = runBacktracking(h, w, rects, rot)
+    elseif alg == integerProgramming
+        result, output = runIntegerProgramming(h, w, rects, rot)
     end
     
     return result, output
@@ -306,6 +307,156 @@ Find the first free slot in the matrix tiles, going first by row, then by column
     end
 
     return h, w
+end
+
+"""
+    runIntegerProgramming(h, w, rects, rot)
+
+Perfect rectangle packing using Integer Programming and the open-source solver HiGHS. The model
+is taken from M. Berger, M. Schröder, K.-H. Küfer, "A constraint programming approach for the
+two-dimensional rectangular packing problem with orthogonal orientations", Berichte des
+Fraunhofer ITWM, Nr. 147 (2008).
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+- `rot`: If rectangles are allowed to be rotated by 90 degrees
+"""
+function runIntegerProgramming(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}, rot::Bool)
+    if rot
+        return solveIntegerProgrammingRot(h, w, rects)
+    else
+        return solveIntegerProgramming(h, w, rects)
+    end
+end
+
+"""
+    solveIntegerProgramming(h, w, rects, rot)
+
+Perfect rectangle packing without rotations using Integer Programming and the open-source
+solver HiGHS.
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+"""
+function solveIntegerProgramming(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
+    s = length(rects)
+    model = Model(HiGHS.Optimizer)
+
+    @variable(model, px[1:s], Int)  # x position
+    @variable(model, py[1:s], Int)  # y position
+    @variable(model, overlap[1:s, 1:s, 1:4], Bin)  # help variable to prevent overlap
+
+    for i in 1 : s
+        @constraint(model, px[i] >= 0)  # position is non-negative
+        @constraint(model, py[i] >= 0)
+
+        @constraint(model, px[i] + rects[i][2] <= w)  # rectangle is contained in square
+        @constraint(model, py[i] + rects[i][1] <= h)
+    end
+
+    for i in 1 : s
+        for j in i + 1 : s
+            @constraint(model, px[i] - px[j] + rects[i][2] <= w * (1 - overlap[i, j, 1]))  # rectangle i is left of rectangle j
+            @constraint(model, px[j] - px[i] + rects[j][2] <= w * (1 - overlap[i, j, 2]))  # rectangle i is right of rectangle j
+            @constraint(model, py[i] - py[j] + rects[i][1] <= h * (1 - overlap[i, j, 3]))  # rectangle i is below rectangle j
+            @constraint(model, py[j] - py[i] + rects[j][1] <= h * (1 - overlap[i, j, 4]))  # rectangle i is above rectangle j
+
+            @constraint(model, sum(overlap[i, j, :]) >= 1)  # one of the cases must be true so that rectangles don't overlap
+        end
+    end
+
+    optimize!(model)
+
+    if (has_values(model))  # if solution was found
+        output = fill(0, h, w)
+
+        for i in 1 : s
+            iPX = Int(round(value(px[i])))
+            iPY = Int(round(value(py[i])))
+
+            for x in iPX + 1 : iPX + rects[i][2] 
+                for y in iPY + 1 : iPY + rects[i][1] 
+                    output[y, x] = i
+                end
+            end
+        end
+
+        return true, output
+    end
+
+    return false, nothing
+end
+
+"""
+    solveIntegerProgrammingRot(h, w, rects, rot)
+
+Perfect rectangle packing with rotations using Integer Programming and the open-source
+solver HiGHS.
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+"""
+function solveIntegerProgrammingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
+    s = length(rects)
+    model = Model(HiGHS.Optimizer)
+
+    @variable(model, sx[1:s], Int)  # width of rectangle i
+    @variable(model, sy[1:s], Int)  # height of rectangle i
+    @variable(model, px[1:s], Int)  # x position
+    @variable(model, py[1:s], Int)  # y position
+    @variable(model, o[1:s], Bin)  # orientation of rectangle
+    @variable(model, overlap[1:s, 1:s, 1:4], Bin)  # help variable to prevent overlap
+
+    for i in 1 : s
+        @constraint(model, px[i] >= 0)  # position is non-negative
+        @constraint(model, py[i] >= 0)
+
+        @constraint(model, px[i] + sx[i] <= w)  # rectangle is contained in square
+        @constraint(model, py[i] + sy[i] <= h)
+
+        @constraint(model, (1 - o[i]) * rects[i][1] + o[i] * rects[i][2] == sx[i])  # determine size from orientation
+        @constraint(model, o[i] * rects[i][1] + (1 - o[i]) * rects[i][2] == sy[i])
+    end
+
+    for i in 1 : s
+        for j in i + 1 : s
+            @constraint(model, px[i] - px[j] + sx[i] <= w * (1 - overlap[i, j, 1]))  # rectangle i is left of rectangle j
+            @constraint(model, px[j] - px[i] + sx[j] <= w * (1 - overlap[i, j, 2]))  # rectangle i is right of rectangle j
+            @constraint(model, py[i] - py[j] + sy[i] <= h * (1 - overlap[i, j, 3]))  # rectangle i is below rectangle j
+            @constraint(model, py[j] - py[i] + sy[j] <= h * (1 - overlap[i, j, 4]))  # rectangle i is above rectangle j
+
+            @constraint(model, sum(overlap[i, j, :]) >= 1)  # one of the cases must be true so that rectangles don't overlap
+        end
+    end
+
+    optimize!(model)
+
+    if (has_values(model))  # if solution was found
+        output = fill(0, h, w)
+
+        for i in 1 : s
+            iPX = Int(round(value(px[i])))
+            iPY = Int(round(value(py[i])))
+            iSX = Int(round(value(sx[i])))
+            iSY = Int(round(value(sy[i])))
+
+            for x in iPX + 1 : iPX + iSX 
+                for y in iPY + 1 : iPY + iSY
+                    output[y, x] = i
+                end
+            end
+        end
+
+        return true, output
+    end
+
+    return false, nothing
 end
 
 
