@@ -62,15 +62,47 @@ function rectanglePacking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}},
     return result, output
 end
 
+"""
+    runBacktracking(h, w, rects, rot)
+
+Perfect rectangle packing using backtracking with top-left heuristic. The rectangles are sorted
+by width and in each step the frist free tile beginning on the top-left is covered. If rotation
+is allowed, squares need to handeled seperatly
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+- `rot`: If rectangles are allowed to be rotated by 90 degrees
+"""
 function runBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}, rot::Bool)
     if rot
-        # TODO: Add vector completion, keep track of squares, order: [rects non-rot, squares, rects rot]
-        return solveBacktrackingRot(h, w, rects)
+        # filter out squares, since they don't need to be rotated
+        squares = filter(x -> x[1] == x[2], rects)
+        filter!(x -> x[1] != x[2], rects)
+        sort!(rects, rev=true, by = x -> x[2])  # sort rectangles with descending width in preparation for top-left heuristic
+        
+        switch = x->Pair(x[2], x[1])  # generate rotated version of rectangles
+        rectsRot = reverse(switch.(rects))
+
+        return solveBacktrackingRot(h, w, vcat(rects, squares, rectsRot), length(rects))
     else
+        sort!(rects, rev=true, by = x -> x[2])  # sort rectangles with descending width in preparation for top-left heuristic
+
         return solveBacktracking(h, w, rects)
     end
 end
 
+"""
+    solveBacktracking(h, w, rects)
+
+Perfect rectangle packing without rotations using backtracking with top-left heuristic.
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+"""
 function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
     prog = ProgressUnknown("Backtracking search:")
     s = length(rects)
@@ -79,24 +111,24 @@ function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}
     used = fill(0, s)  # rectangles used
     coords = Vector{Pair{Int64, Int64}}()  # remember coordinates
     count = 0  # number of rectangles used
-    i = j = kStart = steps = 1
+    x = y = kStart = steps = 1
 
     while true
         ProgressMeter.update!(prog, steps)
 
-        # Try to place a rectangle on (i, j)
+        # Try to place a rectangle on (x, y)
 
         done = false
         k = kStart  # only rectangles after kStart are allowed
         
         while k <= s && !done
-            if used[k] == 0 && (i + rects[k][1] - 1 <= h && j + rects[k][2] - 1 <= w)  # piece not used and fits
+            if used[k] == 0 && (x + rects[k][1] - 1 <= h && y + rects[k][2] - 1 <= w)  # piece not used and fits
                 done = true
 
                 # check permiter of rectangle for collisions with other rectangles
 
                 for l = 0 : rects[k][1] - 1
-                    if tiles[i + l, j] != 0 || tiles[i + l, j + rects[k][2] - 1] != 0
+                    if tiles[x + l, y] != 0 || tiles[x + l, y + rects[k][2] - 1] != 0
                         done = false
                         break
                     end
@@ -104,7 +136,7 @@ function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}
 
                 if done
                     for l = 0 : rects[k][2] - 1
-                        if tiles[i, j + l] != 0 || tiles[i + rects[k][1] - 1, j + l] != 0
+                        if tiles[x, y + l] != 0 || tiles[x + rects[k][1] - 1, y + l] != 0
                             done = false
                             break
                         end
@@ -119,9 +151,9 @@ function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}
             end
         end
 
-        if done  # rectangle k can be placed on (i, j)
-            push!(coords, Pair(i, j))
-            tiles[i : i + rects[k][1] - 1, j : j + rects[k][2] - 1] = fill(k, rects[k][1], rects[k][2])  # fill tiles with selected square
+        if done  # rectangle k can be placed on (x, y)
+            push!(coords, Pair(x, y))
+            tiles[x : x + rects[k][1] - 1, y : y + rects[k][2] - 1] = fill(k, rects[k][1], rects[k][2])  # fill tiles with selected square
 
             count += 1
             used[k] = count
@@ -139,7 +171,7 @@ function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}
             kStart = k + 1  # k does not work as next piece, do not include in next attempt
         end
 
-        i, j = findNext(h, w, tiles)
+        x, y = findNext(h, w, tiles)
 
         if count == s  # all s rectangles are placed
             return true, tiles
@@ -151,10 +183,21 @@ function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}
     end
 end
 
-# TODO
-# - Redefine k <= ceil(s/2) and used[s - k + 1] for more than one square
+"""
+    solveBacktrackingRot(h, w, rects)
 
-function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
+Perfect rectangle packing with rotations using backtracking with top-left heuristic. In rects
+each rectangle is given twice, one for each possible rotation. If a rectangle that is not a
+square is choosen, used[s - k + 1] prevents us from choosing the other orientation of that
+rectangle. 
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+- `numRects`: Number of rectangles that are not a square
+"""
+function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}, numRects::Int64)
     prog = ProgressUnknown("Backtracking search:")
     s = length(rects)
 
@@ -162,24 +205,24 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
     used = fill(0, s)  # rectangles used
     coords = Vector{Pair{Int64, Int64}}()  # remember coordinates
     count = 0  # number of rectangles used
-    i = j = kStart = steps = 1
+    x = y = kStart = steps = 1
 
     while true
         ProgressMeter.update!(prog, steps)
 
-        # Try to place a rectangle on (i, j)
+        # Try to place a rectangle on (x, y)
 
         done = false
         k = kStart  # only rectangles after kStart are allowed
         
-        while (k <= ceil(s/2) || (k <= s && count > 0)) && !done  # because of symmetry the first rectangle is always assumed to be non-rotated (<= ceil(s/2))
-            if used[k] == 0 && (i + rects[k][1] - 1 <= h && j + rects[k][2] - 1 <= w)  # piece not used and fits
+        while (k <= s-numRects || (k <= s && count > 0)) && !done  # because of symmetry the first rectangle is always assumed to be non-rotated
+            if used[k] == 0 && (x + rects[k][1] - 1 <= h && y + rects[k][2] - 1 <= w)  # piece not used and fits
                 done = true
 
                 # check permiter of rectangle for collisions with other rectangles
 
                 for l = 0 : rects[k][1] - 1
-                    if tiles[i + l, j] != 0 || tiles[i + l, j + rects[k][2] - 1] != 0
+                    if tiles[x + l, y] != 0 || tiles[x + l, y + rects[k][2] - 1] != 0
                         done = false
                         break
                     end
@@ -187,7 +230,7 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
 
                 if done
                     for l = 0 : rects[k][2] - 1
-                        if tiles[i, j + l] != 0 || tiles[i + rects[k][1] - 1, j + l] != 0
+                        if tiles[x, y + l] != 0 || tiles[x + rects[k][1] - 1, y + l] != 0
                             done = false
                             break
                         end
@@ -202,12 +245,15 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
             end
         end
 
-        if done  # rectangle k can be placed on (i, j)
-            push!(coords, Pair(i, j))
-            tiles[i : i + rects[k][1] - 1, j : j + rects[k][2] - 1] = fill(k, rects[k][1], rects[k][2])  # fill tiles with selected square
+        if done  # rectangle k can be placed on (x, y)
+            push!(coords, Pair(x, y))
+            tiles[x : x + rects[k][1] - 1, y : y + rects[k][2] - 1] = fill(k, rects[k][1], rects[k][2])  # fill tiles with selected square
 
             count += 1
-            used[s - k + 1] = -1  # different rotation can't be used anymore
+            if k <= numRects || k > s-numRects  # check if true rectangle and not square
+                used[s - k + 1] = -1  # different rotation can't be used anymore
+            end
+
             used[k] = count
             kStart = 1
         else  # no rectangle can be placed anymore, backtrack
@@ -220,15 +266,19 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
 
             count -= 1
             used[k] = 0
-            used[s - k + 1] = 0
+
+            if k <= numRects || k > s-numRects  # check if true rectangle and not square
+                used[s - k + 1] = 0
+            end
+
             kStart = k + 1  # k does not work as next piece, do not include in next attempt
         end
 
-        i, j = findNext(h, w, tiles)
+        x, y = findNext(h, w, tiles)
 
-        if count == s  # all s rectangles are placed
+        if count == s-numRects  # all s rectangles are placed
             return true, tiles
-        elseif count == -1  # no rectangles are placed but kStart > ceil(s/2), so all combinations have been tried
+        elseif count == -1  # no rectangles are placed but kStart > s-numRects, so all combinations have been tried
             return false, nothing
         end
 
@@ -236,6 +286,16 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
     end
 end
 
+"""
+    findNext(h, w, tiles)
+
+Find the first free slot in the matrix tiles, going first by row, then by column.
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `tiles`: Current occupation of rectangle to fill
+"""
 @inline function findNext(h::Int64, w::Int64, tiles::Matrix{Int64})
     for i in 1 : h
         for j in 1 : w
