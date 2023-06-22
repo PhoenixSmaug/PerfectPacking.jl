@@ -15,7 +15,7 @@ end
 """
     rectanglePacking(h, w, rects, rot, alg)
 
-Decides if perfect rectangle packing is possible and if so return it
+Decides if perfect rectangle packing is possible and if so return it.
 
 # Arguments
 - `h`: Height of rectangle to fill
@@ -58,6 +58,8 @@ function rectanglePacking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}},
         result, output = runBacktracking(h, w, rects, rot)
     elseif alg == integerProgramming
         result, output = runIntegerProgramming(h, w, rects, rot)
+    elseif alg == dancingLinks
+        result, output = runDancingLinks(h, w, rects, rot)
     end
     
     return result, output
@@ -68,7 +70,7 @@ end
 
 Perfect rectangle packing using backtracking with top-left heuristic. The rectangles are sorted
 by width and in each step the frist free tile beginning on the top-left is covered. If rotation
-is allowed, squares need to handeled seperatly
+is allowed, squares need to handeled seperatly.
 
 # Arguments
 - `h`: Height of rectangle to fill
@@ -332,7 +334,7 @@ function runIntegerProgramming(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int
 end
 
 """
-    solveIntegerProgramming(h, w, rects, rot)
+    solveIntegerProgramming(h, w, rects)
 
 Perfect rectangle packing without rotations using Integer Programming and the open-source
 solver HiGHS.
@@ -345,6 +347,7 @@ solver HiGHS.
 function solveIntegerProgramming(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
     s = length(rects)
     model = Model(HiGHS.Optimizer)
+    set_optimizer_attribute(model, "log_to_console", output)
 
     @variable(model, px[1:s], Int)  # x position
     @variable(model, py[1:s], Int)  # y position
@@ -392,7 +395,7 @@ function solveIntegerProgramming(h::Int64, w::Int64, rects::Vector{Pair{Int64, I
 end
 
 """
-    solveIntegerProgrammingRot(h, w, rects, rot)
+    solveIntegerProgrammingRot(h, w, rects)
 
 Perfect rectangle packing with rotations using Integer Programming and the open-source
 solver HiGHS.
@@ -405,6 +408,7 @@ solver HiGHS.
 function solveIntegerProgrammingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
     s = length(rects)
     model = Model(HiGHS.Optimizer)
+    set_optimizer_attribute(model, "log_to_console", output)
 
     @variable(model, sx[1:s], Int)  # width of rectangle i
     @variable(model, sy[1:s], Int)  # height of rectangle i
@@ -459,5 +463,276 @@ function solveIntegerProgrammingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64
     return false, nothing
 end
 
+"""
+    runDancingLinks(h, w, rects, rot)
+
+Perfect rectangle packing using Knuth's Dancing Links algorithm. The details are described
+in his [paper](https://arxiv.org/abs/cs/0011047) and the implementation uses dictionaries
+inspired from this [blog post](https://www.cs.mcgill.ca/~aassaf9/python/algorithm_x.html).
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+- `rot`: If rectangles are allowed to be rotated by 90 degrees
+"""
+function runDancingLinks(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}, rot::Bool)
+    if rot
+        return solveDancingLinksRot(h, w, rects)
+    else
+        return solveDancingLinks(h, w, rects)
+    end
+end
+
+"""
+    solveDancingLinks(h, w, rects)
+
+Perfect rectangle packing without rotations using Knuth's Dancing Links algorithm.
+
++---------------------------------------------+--------------------+--------------------+
+|                      -                      | Tile covered (h*w) | Rectangle used (s) |
++---------------------------------------------+--------------------+--------------------+
+| Rectangle 1 on (1, 1)                       |                    |                    |
+| Rectangle 1 on (1, 2)                       |                    |                    |
+| ...                                         |                    |                    |
+| Rectangle 1 on (h - h(rect1), w - w(rect1)) |                    |                    |
+| ...                                         |                    |                    |
+| Rectangle s on (h - h(rect1), w - w(rect1)) |                    |                    |
++---------------------------------------------+--------------------+--------------------+
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+"""
+function solveDancingLinks(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
+    s = length(rects)
+    row = 0
+    lookup = Dict{Int64, NTuple{3, Int64}}()  # (row) -> (rect, px, py), allow reconstruction of rectangles from row number
+
+    dictX = Dict{Int64, Set{Int64}}()
+    dictY = Dict{Int64, Vector{Int64}}()
+    for i in 1 : h*w + s
+        dictX[i] = Set{Int64}()
+    end
+
+    # generate table
+    for i in 1 : s
+        for px in 0 : w - rects[i][2]
+            for py in 0 : h - rects[i][1]
+                row += 1
+                dictY[row] = Vector{Int64}()
+
+                # i-th rectangle is used 
+                push!(dictY[row], h*w + i)
+                push!(dictX[h*w + i], row)
+
+                for x in px + 1 : px + rects[i][2]
+                    for y in py + 1 : py + rects[i][1]
+                        push!(dictY[row], x + (y - 1) * w)
+                        push!(dictX[x + (y - 1) * w], row)
+                    end
+                end
+
+                lookup[row] = (i, px, py)
+            end
+        end
+    end
+
+    solution = Stack{Int64}()
+    dancingLink!(dictX, dictY, solution)
+
+    if !(isempty(solution))  # if solution was found
+        output = fill(0, h, w)
+
+        for i in solution
+            rect, px, py = lookup[i]
+
+            for x in px + 1 : px + rects[rect][2]
+                for y in py + 1 : py + rects[rect][1]
+                    output[y, x] = rect
+                end
+            end
+        end
+
+        return true, output
+    end
+
+    return false, nothing
+end
+
+"""
+    solveDancingLinksRot(h, w, rects)
+
+Perfect rectangle packing with rotations using Knuth's Dancing Links algorithm.
+
++---------------------------------------------+--------------------+--------------------+
+|                      -                      | Tile covered (h*w) | Rectangle used (s) |
++---------------------------------------------+--------------------+--------------------+
+| Rectangle 1 on (1, 1)                       |                    |                    |
+| Rectangle 1 on (1, 2)                       |                    |                    |
+| ...                                         |                    |                    |
+| Rectangle 1 on (h - h(rect1), w - w(rect1)) |                    |                    |
+| Rectangle 1 rotated on (1, 1)               |                    |                    |
+| ...                                         |                    |                    |
+| Rectangle s on (h - h(rect1), w - w(rect1)) |                    |                    |
++---------------------------------------------+--------------------+--------------------+
+
+# Arguments
+- `h`: Height of rectangle to fill
+- `w`: Width of rectangle to fill
+- `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
+"""
+function solveDancingLinksRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
+    s = length(rects)
+    row = 0
+    lookup = Dict{Int64, NTuple{5, Int64}}()  # (row) -> (rect, px, py, sx, sy), allow reconstruction of rectangles from row number
+
+    dictX = Dict{Int64, Set{Int64}}()
+    dictY = Dict{Int64, Vector{Int64}}()
+    for i in 1 : h*w + s
+        dictX[i] = Set{Int64}()
+    end
+
+    # generate table
+    for i in 1 : s
+        for rot in [true, false]
+            sx = rot ? rects[i][1] : rects[i][2]
+            sy = rot ? rects[i][2] : rects[i][1]
+
+            for px in 0 : w - sx
+                for py in 0 : h - sy
+                    row += 1
+                    dictY[row] = Vector{Int64}()
+
+                    # i-th rectangle is used 
+                    push!(dictY[row], h*w + i)
+                    push!(dictX[h*w + i], row)
+
+                    for x in px + 1 : px + sx
+                        for y in py + 1 : py + sy
+                            push!(dictY[row], x + (y - 1) * w)
+                            push!(dictX[x + (y - 1) * w], row)
+                        end
+                    end
+
+                    lookup[row] = (i, px, py, sx, sy)
+                end
+            end
+        end
+    end
+
+    solution = Stack{Int64}()
+    dancingLink!(dictX, dictY, solution)
+
+    if !(isempty(solution))  # if solution was found
+        output = fill(0, h, w)
+
+        for i in solution
+            rect, px, py, sx, sy = lookup[i]
+
+            for x in px + 1 : px + sx 
+                for y in py + 1 : py + sy
+                    output[y, x] = rect
+                end
+            end
+        end
+
+        return true, output
+    end
+
+    return false, nothing
+end
+
+"""
+    dancingLink!(dictX, dictY, solution)
+
+Recursivly run Dancing Links algorithm.
+
+# Arguments
+- `dictX`: Dictionary to replace pointer arithmetic 
+- `dictY`: Dictionary to replace toroidal double-linked matrix
+- `solution`: Stack for backtracking
+"""
+function dancingLink!(dictX::Dict{Int64, Set{Int64}}, dictY::Dict{Int64, Vector{Int64}}, solution::Stack{Int64})
+    if isempty(dictX)  # no constraints left
+        return true
+    end
+
+    # Knuths MRV heuristic, which always chooses the column that can be covered by the least number
+    c = valMin = typemax(Int64)
+    for (key, value) in dictX
+        if length(value) < valMin
+            valMin = length(value)
+            c = key
+        end
+    end
+
+    # backtracking step
+    for i in dictX[c]
+        push!(solution, i)
+        cols = select!(dictX, dictY, i)  # cover rows
+
+        if dancingLink!(dictX, dictY, solution)
+            return true
+        end
+
+        deselect!(dictX, dictY, i, cols)  # uncover rows
+        pop!(solution)
+    end
+
+    return false
+end
+
+"""
+    select!(dictX, dictY, solution)
+
+Cover operation of the Dancing Links algorithm.
+
+# Arguments
+- `dictX`: Dictionary to replace pointer arithmetic 
+- `dictY`: Dictionary to replace toroidal double-linked matrix
+- `r`: Row to cover
+"""
+@inline function select!(dictX::Dict{Int64, Set{Int64}}, dictY::Dict{Int64, Vector{Int64}}, r::Int64)
+    cols = Stack{Set{Int64}}()
+    for j in dictY[r]
+        for i in dictX[j]
+            for k in dictY[i]
+                if k != j
+                    delete!(dictX[k], i)
+                end
+            end
+        end
+
+        push!(cols, pop!(dictX, j))  # remember all rows removed while covering
+    end
+
+    return cols
+end
+
+"""
+    deselect!(dictX, dictY, solution)
+
+Unover operation of the Dancing Links algorithm.
+
+# Arguments
+- `dictX`: Dictionary to replace pointer arithmetic 
+- `dictY`: Dictionary to replace toroidal double-linked matrix
+- `r`: Row to uncover
+- `cols`: Columns removed in cover operation on r
+"""
+@inline function deselect!(dictX::Dict{Int64, Set{Int64}}, dictY::Dict{Int64, Vector{Int64}}, r::Int64, cols::Stack{Set{Int64}})
+    for j in reverse(dictY[r])
+        dictX[j] = pop!(cols)
+        for i in dictX[j]
+            for k in dictY[i]
+                if k != j
+                    push!(dictX[k], i)
+                end
+            end
+        end
+    end
+end
 
 end # module PerfectPacking
