@@ -1,7 +1,7 @@
 name = "PerfectPacking"
 uuid = "81c3f1f7-c8b1-4afe-97d0-b306023db0e9"
 authors = ["PhoenixSmaug <account.it.github@cmuessig.de>"]
-version = "1.0.0"
+version = "1.0.1"
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
