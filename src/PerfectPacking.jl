@@ -224,7 +224,13 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
         done = false
         k = kStart  # only rectangles after kStart are allowed
         
-        while (k <= s-numRects || (k <= s && count > 0)) && !done  # because of symmetry the first rectangle is always assumed to be non-rotated
+        while k <= s && !done
+            # (k <= s-numRects || (k <= s && count > 0))
+            
+            if h == w && count == 0 && k > s-numRects  # if bounding box is a square we can use symmetry and restrict ourself to not rotating the first rectangle
+                break
+            end
+
             if used[k] == 0 && (x + rects[k][1] - 1 <= h && y + rects[k][2] - 1 <= w)  # piece not used and fits
                 done = true
 
