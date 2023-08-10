@@ -32,7 +32,7 @@ function rectanglePacking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}},
     end
 
     if totalArea != h * w
-        println("Total area of rectangles is unequal to area of bounding rectangle")
+        println("Total area of rectangles (" * string(totalArea) * ") is unequal to area of bounding rectangle (" * string(h * w) * ").")
         return false
     end
 
@@ -40,12 +40,12 @@ function rectanglePacking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}},
     for i in rects
         if !rot
             if i[1] > h || i[2] > w
-                println("Not all rectangles fit in bounding rectangle")
+                println("Not all rectangles fit in bounding rectangle.")
                 return false
             end
         else
             if max(i[1], i[2]) > max(h, w) || min(i[1], i[2]) > min(h, w)
-                println("Not all rectangles fit in bounding rectangle")
+                println("Not all rectangles fit in bounding rectangle.")
                 return false
             end
         end
@@ -109,18 +109,16 @@ idea of Prof. Dimitri Leemans at the Université libre de Bruxelles.
 - `rects`: Vector of rectangles to use for the packing; Encoded as Pair(height, width)
 """
 function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}})
-    prog = ProgressUnknown("Backtracking search:")
     s = length(rects)
+    prog = Progress(s-1, "Top nodes explored: ")  # number of rectangles already tried as first rectangle
 
     height = fill(0, h)  # number of tiles covered in each row
     used = fill(0, s)  # rectangles used
     coords = Vector{Pair{Int64, Int64}}()  # remember coordinates
     count = 0  # number of rectangles used
-    x = y = kStart = steps = 1
+    x = y = kStart = 1
 
     while true
-        ProgressMeter.update!(prog, steps)
-
         # Try to place a rectangle on (x, y)
 
         done = false
@@ -150,6 +148,10 @@ function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}
         if done  # rectangle k can be placed on (x, y)
             push!(coords, Pair(x, y))
             height[x : x + rects[k][1] - 1] .+= rects[k][2]  # add rectangle
+
+            if count == 0  # choice for first rectangle placed is switched
+                ProgressMeter.update!(prog, k-1)
+            end
 
             count += 1
             used[k] = count
@@ -186,8 +188,6 @@ function solveBacktracking(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}
         elseif count == -1  # no rectangles are placed but kStart > s, so all combinations have been tried
             return false, nothing
         end
-
-        steps += 1
     end
 end
 
@@ -207,25 +207,23 @@ is an unpublished idea of Prof. Dimitri Leemans at the Université libre de Brux
 - `numRects`: Number of rectangles that are not a square
 """
 function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int64}}, numRects::Int64)
-    prog = ProgressUnknown("Backtracking search:")
     s = length(rects)
+    steps = h == w ? s-numRects-1 : s-1
+    prog = Progress(steps, "Top nodes explored: ")  # number of rectangles already tried as first rectangle
 
     height = fill(0, h)  # number of tiles covered in each row
     used = fill(0, s)  # rectangles used
     coords = Vector{Pair{Int64, Int64}}()  # remember coordinates
     count = 0  # number of rectangles used
-    x = y = kStart = steps = 1
+    x = y = kStart = 1
 
     while true
-        ProgressMeter.update!(prog, steps)
-
         # Try to place a rectangle on (x, y)
 
         done = false
         k = kStart  # only rectangles after kStart are allowed
         
         while k <= s && !done
-            # (k <= s-numRects || (k <= s && count > 0))
             
             if h == w && count == 0 && k > s-numRects  # if bounding box is a square we can use symmetry and restrict ourself to not rotating the first rectangle
                 break
@@ -254,6 +252,10 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
         if done  # rectangle k can be placed on (x, y)
             push!(coords, Pair(x, y))
             height[x : x + rects[k][1] - 1] .+= rects[k][2]  # add rectangle
+
+            if count == 0  # choice for first rectangle placed is switched
+                ProgressMeter.update!(prog, k-1)
+            end
 
             count += 1
             if k <= numRects || k > s-numRects  # check if true rectangle and not square
@@ -299,8 +301,6 @@ function solveBacktrackingRot(h::Int64, w::Int64, rects::Vector{Pair{Int64, Int6
         elseif count == -1  # no rectangles are placed but kStart > s-numRects, so all combinations have been tried
             return false, nothing
         end
-
-        steps += 1
     end
 end
 
